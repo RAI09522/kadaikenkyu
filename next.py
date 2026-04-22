@@ -27,30 +27,31 @@ def run_final_experiment(tickers, start_date="2023-01-01"):
         df['vol'] = df['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
         df['mkt_vol'] = mkt_vol.fillna(mkt_vol_mean)
 
-        def calculate_dva(row):
-            # 必要なデータがない期間は、50日線で代用するか、判定を緩める
-            price = float(row['Close'])
-            # 200日線がなければ50日線、それもなければ現在価格を使用
-            sma_ref = row['sma200'] if not pd.isna(row['sma200']) else (row['sma50'] if not pd.isna(row['sma50']) else price)
-            prev = row['prev_close'] if not pd.isna(row['prev_close']) else price
-            
-            # 生存判定（条件を少し緩和：SMAの60%以上ならGO）
-            signal = 1 if (price > sma_ref * 0.6) and (price > prev * 0.7) else 0
-            
-            # 安全装置（あまりにもボラが高い時だけ止める）
-            vol_val = row['vol'] if not pd.isna(row['vol']) else 0.3
-            m_vol_val = row['mkt_vol'] if not pd.isna(row['mkt_vol']) else 0.2
-            phi = max(0.1, 1 - (vol_val - (m_vol_val * 2.0)) / 5) # 最低でも0.1は買う
-            
-            # 加速装置
-            # 直近20日の平均を基準にする
-            idx = df.index.get_loc(row.name)
-            p_ref = df['Close'].iloc[max(0, idx-20):idx].mean() if idx > 0 else price
-            gap = (p_ref - price) / p_ref if p_ref > 0 else 0
-            psi = np.exp(3.0 * gap) # ラムダを3.0に固定して感度を調整
-            
-            daily_base = monthly_budget / 20
-            return daily_base * phi * psi * signal
+       # calculate_dva 関数の中身を以下のように微調整します
+
+def calculate_dva(row):
+    price = float(row['Close'])
+    # 基準線をSMA50に据え、トレンドへの追従性を高める
+    sma_ref = row['sma50'] if not pd.isna(row['sma50']) else price
+    prev = row['prev_close'] if not pd.isna(row['prev_close']) else price
+    
+    # 1. 生存判定（トレンドに乗り続けるよう緩和）
+    # 50日線の50%以上なら積極的に継続
+    signal = 1 if (price > sma_ref * 0.5) and (price > prev * 0.7) else 0
+    
+    # 2. 安全装置（Phi）
+    # 市場との連動性を重視
+    phi = max(0.5, 1 - (row['vol'] - (row['mkt_vol'] * 2.0)) / 5) 
+    
+    # 3. 加速装置（Psi） - ここが肝！
+    # 基準を「過去平均」ではなく「現在のトレンド（SMA50）」との乖離にする
+    gap = (sma_ref - price) / sma_ref
+    # 割安（gap > 0）の時は爆発的に買い、割高（gap < 0）でも一定量は買う
+    psi = np.exp(4.0 * gap) if gap > 0 else np.exp(1.0 * gap)
+    
+    # 1日あたりの標準投資額
+    daily_base = monthly_budget / 20
+    return daily_base * phi * psi * signal
 
         df['DVA_Amount'] = df.apply(calculate_dva, axis=1)
 

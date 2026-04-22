@@ -35,6 +35,7 @@ def run_strategy_tournament(tickers, start_date="2023-01-01"):
             price = float(df['Close'].iloc[i])
             ema = df['ema20'].iloc[i]
             bb_l = df['bb_low'].iloc[i]
+            
             if pd.isna(ema) or pd.isna(bb_l):
                 invest_amt = daily_base
             else:
@@ -68,19 +69,19 @@ def run_strategy_tournament(tickers, start_date="2023-01-01"):
         dca_monthly_shares = (monthly_budget / monthly_df['Close']).sum()
         dca_monthly_price = (monthly_budget * len(monthly_df)) / dca_monthly_shares if dca_monthly_shares > 0 else 0
 
-        # --- データまとめ ---
+        # --- ランキングデータの整理 ---
+        dva_total_spent = df['DVA_Amount'].sum() # ここで定義
+        
         methods = [
             {"name": "提案DVA(株数連動)", "price": dva_total_spent / dva_shares if dva_shares > 0 else 0, "shares": dva_shares},
             {"name": "毎日積立(DCA)", "price": dca_daily_price, "shares": dca_daily_shares},
             {"name": "毎週積立(DCA)", "price": dca_weekly_price, "shares": dca_weekly_shares},
             {"name": "毎月積立(DCA)", "price": dca_monthly_price, "shares": dca_monthly_shares}
         ]
-        # ※ dva_total_spent を計算
-        methods[0]["price"] = df['DVA_Amount'].sum() / dva_shares if dva_shares > 0 else 0
 
         # --- ランキング表示 ---
         print("-" * 70)
-        print(f" {ticker} 実験結果レポート")
+        print(f" {ticker} 実験結果ダブルランキング")
         print("-" * 70)
         
         # 取得単価ランキング（低い順）
@@ -88,17 +89,19 @@ def run_strategy_tournament(tickers, start_date="2023-01-01"):
         price_rank = sorted(methods, key=lambda x: x['price'])
         best_price = price_rank[0]['price']
         for i, m in enumerate(price_rank, 1):
-            diff = (m['price'] / best_price - 1) * 100 if best_price > 0 else 0
-            print(f" {i}位: {m['name']:<15} | ${m['price']:<8.2f} (最安比 +{diff:.2f}%)")
+            if best_price > 0:
+                diff = (m['price'] / best_price - 1) * 100
+                print(f" {i}位: {m['name']:<15} | ${m['price']:>8.2f} (最安比 +{diff:.2f}%)")
             
         print("\n【最終保有株数ランキング】（多いほど資産増）")
         # 保有株数ランキング（多い順）
         share_rank = sorted(methods, key=lambda x: x['shares'], reverse=True)
         best_share = share_rank[0]['shares']
         for i, m in enumerate(share_rank, 1):
-            diff = (1 - m['shares'] / best_share) * 100 if best_share > 0 else 0
-            print(f" {i}位: {m['name']:<15} | {m['shares']:>8.2f} 株 (最多比 -{diff:.2f}%)")
+            if best_share > 0:
+                diff = (1 - m['shares'] / best_share) * 100
+                print(f" {i}位: {m['name']:<15} | {m['shares']:>8.2f} 株 (最多比 -{diff:.2f}%)")
         print("-" * 70)
 
-# 実験実行
+# 実行
 run_strategy_tournament(["NVDA", "AAPL", "TSLA", "8088.T"])

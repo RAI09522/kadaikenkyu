@@ -4,8 +4,8 @@ import numpy as np
 
 def run_ultimate_comparison(tickers, start_date="2023-01-01"):
     monthly_budget = 100000 
-    # 比較する曜日設定 (MON=月, TUE=火, WED=水, THU=木, FRI=金)
-    weekdays = {'MON': 'W-MON', 'TUE': 'W-TUE', 'WED': 'W-WED', 'THU': 'W-THU', 'FRI': 'W-FRI'}
+    # 0=月, 1=火, 2=水, 3=木, 4=金
+    weekday_map = {0: 'MON', 1: 'TUE', 2: 'WED', 3: 'THU', 4: 'FRI'}
     
     spy = yf.download("^GSPC", start=start_date, progress=False)
     if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
@@ -23,7 +23,8 @@ def run_ultimate_comparison(tickers, start_date="2023-01-01"):
         df['prev_close'] = df['Close'].shift(1)
         df['sma50'] = df['Close'].rolling(window=50).mean()
         df['vol'] = df['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
-        df['mkt_vol'] = mkt_vol.fillna(mkt_vol_mean)
+        df['mkt_vol'] = mkt_vol.reindex(df.index).fillna(mkt_vol_mean)
+        df['day_of_week'] = df.index.dayofweek # 曜日を取得
 
         # --- DVA-AAM 計算ロジック ---
         def calculate_dva(row):
@@ -41,26 +42,38 @@ def run_ultimate_comparison(tickers, start_date="2023-01-01"):
             return (monthly_budget / 20) * phi * psi * signal
 
         df['DVA_Amount'] = df.apply(calculate_dva, axis=1)
-        dva_avg = df['DVA_Amount'].sum() / (df['DVA_Amount'] / df['Close']).sum()
+        
+        # DVAの結果計算
+        dva_total_spent = df['DVA_Amount'].sum()
+        dva_total_shares = (df['DVA_Amount'] / df['Close']).sum()
+        dva_avg = dva_total_spent / dva_total_shares if dva_total_shares > 0 else 0
 
         # --- 各曜日のDCA計算 ---
         dca_results = {}
-        for day_name, day_code in weekdays.items():
-            # その曜日だけのデータを抽出
-            dca_df = df.resample(day_code).last().dropna()
-            # 週あたり予算を25,000円として計算
-            shares = (25000 / dca_df['Close']).sum()
-            spent = len(dca_df) * 25000
-            dca_results[day_name] = round(spent / shares, 2)
+        for day_num, day_name in weekday_map.items():
+            # その曜日だけの行を抽出
+            dca_df = df[df['day_of_week'] == day_num].copy()
+            if dca_df.empty:
+                dca_results[day_name] = 0
+                continue
+            
+            # 週に1回、25000円分買う設定
+            dca_spent = len(dca_df) * 25000
+            dca_shares = (25000 / dca_df['Close']).sum()
+            dca_results[day_name] = round(dca_spent / dca_shares, 2)
 
         # --- 結果表示 ---
         print("-" * 65)
-        print(f"{ticker} 取得単価比較表")
+        print(f"{ticker} 取得単価比較（DVA vs 全曜日DCA）")
         print("-" * 65)
         print(f" 提案DVAモデル : ${round(dva_avg, 2)}")
         for day, price in dca_results.items():
-            diff = (1 - dva_avg / price) * 100
-            print(f" DCA ({day}積立) : ${price:<8} (DVAの優位性: {diff:.2f}%)")
+            if price > 0:
+                diff = (1 - dva_avg / price) * 100
+                print(f" DCA ({day}積立) : ${price:<8} (DVAの優位性: {diff:.2f}%)")
+            else:
+                print(f" DCA ({day}積立) : データ不足")
         print("-" * 65)
 
+# 分析実行
 run_ultimate_comparison(["NVDA", "AAPL", "TSLA"])

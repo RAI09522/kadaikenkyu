@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-def run_strategy_tournament(tickers, start_date="2014-01-01"):
+def run_strategy_tournament(tickers, start_date="2009-01-01"):
     monthly_budget = 100000
     daily_base = monthly_budget / 20
     

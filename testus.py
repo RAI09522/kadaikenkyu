@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-def run_strategy_tournament(tickers, start_date="2023-01-01"):
+def run_strategy_tournament(tickers, start_date="2014-01-01"):
     monthly_budget = 100000
     daily_base = monthly_budget / 20
     
@@ -104,4 +104,4 @@ def run_strategy_tournament(tickers, start_date="2023-01-01"):
         print("-" * 70)
 
 # 実行
-run_strategy_tournament(["NVDA", "AAPL", "TSLA", "8088.T"])
+run_strategy_tournament(["NVDA", "AAPL", "TSLA", "VFS"])

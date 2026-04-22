@@ -6,81 +6,78 @@ def run_japan_stock_system(tickers, start_date="2023-01-01"):
     monthly_budget = 100000 
     daily_base = monthly_budget / 20
     
-    print("日本市場（日経225）データを取得中...")
+    print("市場データを取得中...")
+    # 日経平均を取得し、インデックスを単純な日付にする
     mkt = yf.download("^N225", start=start_date, progress=False)
     if isinstance(mkt.columns, pd.MultiIndex): mkt.columns = mkt.columns.get_level_values(0)
-    # 市場ボラを計算
-    mkt_vol_raw = mkt['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
+    mkt.index = mkt.index.date # タイムゾーンを除去して「日付のみ」に
+    
+    # 市場ボラ計算
+    mkt_vol_series = mkt['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
 
     for ticker in tickers:
-        print(f"\n【日本株分析: {ticker}】解析中...")
+        print(f"\n【分析中: {ticker}】")
         df = yf.download(ticker, start=start_date, progress=False)
-        if df.empty: 
-            print(f"データが空です: {ticker}")
-            continue
-        # マルチインデックス対策
+        if df.empty: continue
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        df.index = df.index.date # タイムゾーンを除去
 
-        # 指標計算
-        # タイムゾーンを合わせる
-        df.index = df.index.tz_localize(None)
-        mkt_vol_raw.index = mkt_vol_raw.index.tz_localize(None)
+        # 市場データと個別銘柄データを日付でガッチャンコする（これが確実）
+        combined = pd.DataFrame(index=df.index)
+        combined['Close'] = df['Close']
+        combined['mkt_vol'] = mkt_vol_series.reindex(df.index).ffill().fillna(mkt_vol_series.mean())
         
-        df['mkt_vol'] = mkt_vol_raw.reindex(df.index).ffill().fillna(mkt_vol_raw.mean())
-        df['vol'] = df['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
-        df['ema20'] = df['Close'].ewm(span=20, adjust=False).mean()
-        df['bb_low'] = df['ema20'] - (df['Close'].rolling(window=20).std() * 2)
+        # 指標計算
+        combined['vol'] = combined['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
+        combined['ema20'] = combined['Close'].ewm(span=20, adjust=False).mean()
+        std20 = combined['Close'].rolling(window=20).std()
+        combined['bb_low'] = combined['ema20'] - (std20 * 2)
 
         # --- DVAロジック ---
-        df['DVA_Amount'] = 0.0
         dva_shares = 0.0
+        total_spent = 0.0
         
-        for i in range(len(df)):
-            price = float(df['Close'].iloc[i])
-            ema = df['ema20'].iloc[i]
-            bb_l = df['bb_low'].iloc[i]
-            vol = df['vol'].iloc[i]
-            m_vol = df['mkt_vol'].iloc[i]
+        for i in range(len(combined)):
+            row = combined.iloc[i]
+            price = float(row['Close'])
+            ema = row['ema20']
+            bb_l = row['bb_low']
             
-            # データ不足期間の回避
-            if pd.isna(ema) or pd.isna(bb_l) or pd.isna(vol):
+            if pd.isna(ema) or pd.isna(bb_l):
                 invest_amt = daily_base
             else:
-                # 理想の株数（目標設定）
-                ideal_shares_pace = (daily_base * (i + 1)) / ema
-                share_gap = (ideal_shares_pace - dva_shares) / ideal_shares_pace if ideal_shares_pace > 0 else 0
+                # 株数フィードバック
+                ideal_shares = (daily_base * (i + 1)) / ema
+                share_gap = (ideal_shares - dva_shares) / ideal_shares if ideal_shares > 0 else 0
                 share_boost = 1.0 + max(0, min(1.0, share_gap * 2.0))
                 
-                # 価格ロジック（感度を日本株向けに調整）
+                # 日本株向け価格ロジック
                 gap = (ema - price) / ema
                 psi = np.exp(6.0 * gap) * (2.5 if price < bb_l else 1.0)
-                phi = max(0.5, 1 - (vol - (m_vol * 1.2)) / 5)
+                phi = max(0.5, 1 - (row['vol'] - (row['mkt_vol'] * 1.2)) / 5)
                 tf = 1.1 if price > ema else 0.9
                 
                 invest_amt = daily_base * phi * psi * tf * share_boost
 
-            # 投資額が極端に0にならないようにセーフティをかける
+            # セーフティ：最低限の購入
             invest_amt = max(invest_amt, daily_base * 0.1)
             
-            df.iloc[i, df.columns.get_loc('DVA_Amount')] = invest_amt
+            total_spent += invest_amt
             dva_shares += (invest_amt / price)
 
         # --- DCA計算 ---
-        dca_daily_shares = (daily_base / df['Close']).sum()
-        dca_daily_price = (daily_base * len(df)) / dca_daily_shares if dca_daily_shares > 0 else 0
-        
+        dca_shares = (daily_base / combined['Close']).sum()
+        dca_price = (daily_base * len(combined)) / dca_shares
+
         # --- 結果表示 ---
-        total_spent = df['DVA_Amount'].sum()
         dva_price = total_spent / dva_shares if dva_shares > 0 else 0
         
-        print("-" * 60)
-        print(f" {ticker} 日本株DVAレポート")
-        print("-" * 60)
-        print(f" 提案DVA平均単価: {dva_price:>12.2f} 円")
-        print(f" 毎日積立平均単価: {dca_daily_price:>12.2f} 円")
-        diff = (1 - dva_price / dca_daily_price) * 100 if dca_daily_price > 0 else 0
-        print(f" 優位性(単価抑制率): {diff:.2f} %")
-        print(f" 最終確保株数: {dva_shares:>12.2f} 株")
-        print("-" * 60)
+        print("-" * 50)
+        print(f" 提案DVA単価: {dva_price:>10.2f} 円")
+        print(f" 毎日積立単価: {dca_price:>10.2f} 円")
+        diff = (1 - dva_price / dca_price) * 100
+        print(f" 単価抑制率  : {diff:.2f} %")
+        print(f" 最終確保株数: {dva_shares:>10.2f} 株")
+        print("-" * 50)
 
 run_japan_stock_system(["8088.T", "7203.T", "6758.T", "8058.T"])

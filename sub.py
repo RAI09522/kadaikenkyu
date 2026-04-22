@@ -96,3 +96,19 @@ def run_long_term_analysis(tickers, start_date="2023-01-01"):
 
 # 実行する銘柄リスト
 run_long_term_analysis(["NVDA", "AAPL", "TSLA"])
+
+# 各銘柄の累積投資額と取得株数の簡易計算
+total_dva_spent = df['DVA_Amount'].sum()
+total_dca_spent = df['DCA_Amount'].sum()
+
+# 取得単価の比較（投資額 / その時の株価 の合計）
+shares_dva = (df['DVA_Amount'] / df['Close']).sum()
+shares_dca = (df['DCA_Amount'] / df['Close']).sum()
+
+avg_price_dva = total_dva_spent / shares_dva
+avg_price_dca = total_dca_spent / shares_dca
+
+print(f"【最終比較結果】")
+print(f"DVA平均取得単価: {avg_price_dva:.2f}")
+print(f"DCA平均取得単価: {avg_price_dca:.2f}")
+print(f"単価削減率: {(1 - avg_price_dva/avg_price_dca)*100:.2f}%")

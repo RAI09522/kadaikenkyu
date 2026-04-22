@@ -86,5 +86,5 @@ def run_strategy_tournament(tickers, start_date="2023-01-01"):
             print(f" {i}位: {name:<20} | ${price:<8.2f} (最安比 +{diff:.2f}%)")
         print("-" * 65)
 
-# 実行
-run_strategy_tournament(["NVDA", "AAPL", "TSLA"])
+# 実行（ここに実験したい株のコードを入力）
+run_strategy_tournament(["NVDA", "AAPL", "TSLA", "8088.T"]) 

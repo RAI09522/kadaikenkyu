@@ -3,61 +3,96 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_long_term_analysis(tickers, start_date="2023-01-01", end_date="2024-12-31"):
-    base_amount = 100000 # 毎月の基本積立額
+def run_long_term_analysis(tickers, start_date="2023-01-01"):
+    base_amount = 100000 
     
+    # 1. 市場平均（S&P 500）のボラティリティを計算
+    spy = yf.download("^GSPC", start=start_date)
+    # マルチインデックス対策：列をフラットにする
+    if isinstance(spy.columns, pd.MultiIndex):
+        spy.columns = spy.columns.get_level_values(0)
+    mkt_vol = spy['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
+
     for ticker in tickers:
-        print(f"--- {ticker} の分析を開始 ---")
+        print(f"\n--- {ticker} の分析を開始 ---")
+        stock_obj = yf.Ticker(ticker)
+        df = stock_obj.history(start=start_date)
         
-        # 1. データの自動取得
-        data = yf.download(ticker, start=start_date, end=end_date)
-        if data.empty: continue
-        
-        # 指標の計算
-        df = data[['Close']].copy()
+        if df.empty:
+            print(f"{ticker} のデータ取得に失敗しました。")
+            continue
+
+        # マルチインデックス対策：列名を単純化
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        # 財務指標（エラー回避のためデフォルト値を設定）
+        try:
+            info = stock_obj.info
+            curr_pe = info.get('trailingPE', 35)
+            curr_pbr = info.get('priceToBook', 15)
+        except:
+            curr_pe, curr_pbr = 35, 15
+
+        # 必要な指標の計算
         df['prev_close'] = df['Close'].shift(1)
         df['sma200'] = df['Close'].rolling(window=200).mean()
-        # ボラティリティ（20日移動標準偏差の年率換算）
         df['vol'] = df['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
-        
-        # 市場（S&P500）のボラティリティ取得
-        spy = yf.download("^GSPC", start=start_date, end=end_date)['Close']
-        mkt_vol = spy.pct_change().rolling(window=20).std() * np.sqrt(252)
         df['mkt_vol'] = mkt_vol
 
-        # 2. DVA-AAM ロジック適用
+        # DVA-AAM 計算エンジン
         def calculate_dva(row):
-            # ※本来は動的なPER/PBRが必要ですが、長期分析用に一旦一定値または推定値で計算
-            # 実際にはここに取得した財務データを結合できます
-            pe_target, pe_curr = 35, 30 
-            pbr_target, pbr_curr = 15, 12
-            p_avg = df['Close'].expanding().mean().shift(1).iloc[df.index.get_loc(row.name)]
+            # データの欠損がある期間（開始直後など）はスキップ
+            if pd.isna(row['sma200']) or pd.isna(row['mkt_vol']) or pd.isna(row['prev_close']):
+                return 0
             
-            # 生存・損切り判定
-            f_trend = 1 if row['Close'] > (row['sma200'] * 0.7) else 0
-            f_panic = 1 if row['Close'] > (row['prev_close'] * 0.8) else 0
-            omega = 1 if row['Close'] > (row['sma200'] * 0.8) else 0
-            signal = f_trend * f_panic
+            # 生存・損切り判定 (数値として取得)
+            price = float(row['Close'])
+            sma = float(row['sma200'])
+            prev = float(row['prev_close'])
             
-            # 安全装置 & 加速装置
-            phi = max(0, 1 - (row['vol'] - (row['mkt_vol'] * 1.5)) / 10)
-            dyn_lambda = 2.0 * (pe_target / pe_curr) * (1 + (pbr_target / pbr_curr))
-            gap = (p_avg - row['Close']) / p_avg if not pd.isna(p_avg) else 0
+            f_trend = 1 if price > (sma * 0.7) else 0
+            f_panic = 1 if price > (prev * 0.8) else 0
+            omega = 1 if price > (sma * 0.8) else 0
+            
+            # 安全装置
+            phi = max(0, 1 - (float(row['vol']) - (float(row['mkt_vol']) * 1.5)) / 10)
+            
+            # 動的ラムダ (簡易版)
+            dyn_lambda = 2.0 * (35 / curr_pe) * (1 + (15 / curr_pbr))
+            
+            # 加速装置
+            # その時点までの平均単価を算出
+            current_idx = df.index.get_loc(row.name)
+            p_avg = df['Close'].iloc[:current_idx].mean() if current_idx > 0 else price
+            
+            gap = (p_avg - price) / p_avg if p_avg > 0 else 0
             psi = np.exp(dyn_lambda * gap)
             
-            return base_amount * phi * psi * omega * signal
+            return base_amount * phi * psi * omega * f_trend * f_panic
 
+        # 計算実行
         df['DVA_Amount'] = df.apply(calculate_dva, axis=1)
-        df['DCA_Amount'] = base_amount # 比較用のドルコスト平均法
 
-        # 3. グラフ化
-        plt.figure(figsize=(12, 5))
-        plt.plot(df.index, df['DVA_Amount'], label='DVA-AAM (Dynamic)', color='blue')
-        plt.axhline(y=base_amount, color='red', linestyle='--', label='DCA (Fixed)')
-        plt.title(f"{ticker} Investment Amount Over Time")
+        # 4. 結果の可視化
+        plt.figure(figsize=(12, 6))
+        plt.subplot(2, 1, 1)
+        plt.plot(df.index, df['Close'], label='Stock Price', color='black')
+        plt.plot(df.index, df['sma200'], label='SMA200', color='gray', linestyle='--')
+        plt.title(f"{ticker} Analysis")
         plt.legend()
-        plt.show()
 
-# 分析したい銘柄リスト
-my_tickers = ["NVDA", "AAPL", "TSLA", "MSFT"]
-run_long_term_analysis(my_tickers)
+        plt.subplot(2, 1, 2)
+        plt.fill_between(df.index, df['DVA_Amount'], color='blue', alpha=0.3, label='DVA-AAM Investment')
+        plt.axhline(y=base_amount, color='red', linestyle='--', label='Normal DCA')
+        plt.ylabel("Investment Amount")
+        plt.legend()
+        plt.tight_layout()
+        
+        # グラフをファイル保存（VSCode等で表示されない場合用）
+        plt.savefig(f"{ticker}_analysis.png")
+        plt.show()
+        print(f"✅ {ticker} の分析完了。画像 '{ticker}_analysis.png' を保存しました。")
+
+# 実行する銘柄リスト
+run_long_term_analysis(["NVDA", "AAPL", "TSLA"])

@@ -82,4 +82,4 @@ def run_ultimate_comparison(tickers, start_date="2014-01-01"):
         print("-" * 65)
 
 if __name__ == "__main__":
-    run_ultimate_comparison(["NVDA", "AAPL", "TSLA"])
+    run_ultimate_comparison(["NVDA", "AAPL", "TSLA", "8088.T"])

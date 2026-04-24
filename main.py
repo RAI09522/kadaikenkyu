@@ -22,7 +22,7 @@ def run_share_count_experiment(tickers, start_date="2014-01-01"):
 
         # 指標計算
         df['mkt_vol'] = mkt_vol_raw.reindex(df.index).ffill().fillna(mkt_vol_raw.mean())
-        df['vol'] = df['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
+        df['vol'] = df['Close'].pct_change(fill_method=None).rolling(window=20).std() * np.sqrt(252)
         df['ema20'] = df['Close'].ewm(span=20, adjust=False).mean()
         df['bb_low'] = df['ema20'] - (df['Close'].rolling(window=20).std() * 2)
 

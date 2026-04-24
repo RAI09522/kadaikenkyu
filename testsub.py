@@ -2,144 +2,158 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-def run_ultimate_strategy(tickers, start_date="2020-01-01"):
+def compare_strategies(ticker, start="2020-01-01"):
     monthly_budget = 100000
     daily_base = monthly_budget / 20
-    max_cash_multiple = 3  # 1日最大投資倍率
 
-    print("市場データ取得中...")
-    spy = yf.download("^GSPC", start=start_date, progress=False)
-    if isinstance(spy.columns, pd.MultiIndex):
-        spy.columns = spy.columns.get_level_values(0)
+    print(f"\n===== {ticker} 比較開始 =====")
 
-    mkt_vol = spy['Close'].pct_change().rolling(20).std() * np.sqrt(252)
+    # データ取得
+    df = yf.Ticker(ticker).history(start=start)
+    if df.empty:
+        print("データなし")
+        return
 
-    for ticker in tickers:
-        print(f"\n===== {ticker} 分析開始 =====")
-        df = yf.Ticker(ticker).history(start=start_date)
+    # 指標
+    df['ret'] = df['Close'].pct_change()
+    df['ema20'] = df['Close'].ewm(span=20).mean()
+    df['ema50'] = df['Close'].ewm(span=50).mean()
+    std20 = df['Close'].rolling(20).std()
+    df['bb_low'] = df['ema20'] - 2 * std20
 
-        if df.empty:
-            print("データなし")
+    # RSI
+    delta = df['Close'].diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+
+    # =========================
+    # ① DVA（最強版簡易）
+    # =========================
+    dva_shares = 0
+    dva_cash = 0
+    dva_values = []
+
+    for i in range(len(df)):
+        price = df['Close'].iloc[i]
+
+        if pd.isna(price):
+            dva_values.append(dva_shares * price)
             continue
 
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        invest = daily_base
 
-        # ===== 指標 =====
-        df['return'] = df['Close'].pct_change()
-        df['vol'] = df['return'].rolling(20).std() * np.sqrt(252)
-        df['ema20'] = df['Close'].ewm(span=20).mean()
-        df['ema50'] = df['Close'].ewm(span=50).mean()
-        std20 = df['Close'].rolling(20).std()
-        df['bb_low'] = df['ema20'] - 2 * std20
+        ema20 = df['ema20'].iloc[i]
+        ema50 = df['ema50'].iloc[i]
+        bb_low = df['bb_low'].iloc[i]
+        rsi = df['rsi'].iloc[i]
 
-        # RSI
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
+        if not pd.isna(ema20):
+            gap = (ema20 - price) / ema20
+            invest *= np.exp(5 * gap)
 
-        # 市場ボラ同期
-        df['mkt_vol'] = mkt_vol.reindex(df.index).ffill().fillna(mkt_vol.mean())
+        if not pd.isna(bb_low) and price < bb_low:
+            invest *= 2
 
-        # ===== 投資シミュ =====
-        shares = 0
-        cash_spent = 0
-        portfolio_values = []
+        if not pd.isna(ema50):
+            invest *= 1.2 if price > ema50 else 0.7
 
-        for i in range(len(df)):
-            price = df['Close'].iloc[i]
+        if not pd.isna(rsi):
+            if rsi < 30:
+                invest *= 1.5
+            elif rsi > 70:
+                invest *= 0.6
 
-            if pd.isna(price):
-                portfolio_values.append(shares * price)
-                continue
+        invest = min(invest, daily_base * 3)
 
-            ema20 = df['ema20'].iloc[i]
-            ema50 = df['ema50'].iloc[i]
-            bb_low = df['bb_low'].iloc[i]
-            vol = df['vol'].iloc[i]
-            mktv = df['mkt_vol'].iloc[i]
-            rsi = df['rsi'].iloc[i]
+        dva_shares += invest / price
+        dva_cash += invest
+        dva_values.append(dva_shares * price)
 
-            invest = daily_base
+    df['DVA'] = dva_values
 
-            # ===== ① 割安ロジック =====
-            if not pd.isna(ema20):
-                gap = (ema20 - price) / ema20
-                invest *= np.exp(5 * gap)
+    # =========================
+    # ② DCA（毎日）
+    # =========================
+    dca_daily_shares = (daily_base / df['Close']).cumsum()
+    df['DCA_daily'] = dca_daily_shares * df['Close']
 
-            # ボリバン下
-            if not pd.isna(bb_low) and price < bb_low:
-                invest *= 2.0
+    # =========================
+    # ③ DCA（毎週）
+    # =========================
+    weekly = df[df.index.dayofweek == 2].copy()  # 水曜
+    weekly_shares = (25000 / weekly['Close']).cumsum()
+    weekly['shares'] = weekly_shares
 
-            # ===== ② トレンド =====
-            if not pd.isna(ema50):
-                if price > ema50:
-                    invest *= 1.2
-                else:
-                    invest *= 0.7
+    df['DCA_weekly'] = np.nan
+    last = 0
+    for i in range(len(df)):
+        date = df.index[i]
+        if date in weekly.index:
+            last = weekly.loc[date, 'shares']
+        df.iloc[i, df.columns.get_loc('DCA_weekly')] = last * df['Close'].iloc[i]
 
-            # ===== ③ RSI =====
-            if not pd.isna(rsi):
-                if rsi < 30:
-                    invest *= 1.5
-                elif rsi > 70:
-                    invest *= 0.6
+    # =========================
+    # ④ DCA（毎月）
+    # =========================
+    monthly = df.resample('ME').last()
+    monthly_shares = (monthly_budget / monthly['Close']).cumsum()
+    monthly['shares'] = monthly_shares
 
-            # ===== ④ ボラ制御 =====
-            if not pd.isna(vol) and not pd.isna(mktv):
-                risk_factor = 1 - max(0, (vol - mktv * 1.5)) / 5
-                invest *= max(0.5, risk_factor)
+    df['DCA_monthly'] = np.nan
+    last = 0
+    for i in range(len(df)):
+        date = df.index[i]
+        if date in monthly.index:
+            last = monthly.loc[date, 'shares']
+        df.iloc[i, df.columns.get_loc('DCA_monthly')] = last * df['Close'].iloc[i]
 
-            # ===== ⑤ 株数フィードバック =====
-            if not pd.isna(ema20):
-                ideal_shares = (daily_base * (i + 1)) / ema20
-                gap = (ideal_shares - shares) / ideal_shares if ideal_shares > 0 else 0
-                invest *= (1 + min(1, max(0, gap * 2)))
+    # =========================
+    # 評価関数
+    # =========================
+    def evaluate(series, name):
+        series = series.dropna()
+        returns = series.pct_change().dropna()
 
-            # ===== ⑥ 暴落ブースト =====
-            if not pd.isna(ema20):
-                drop = (ema20 - price) / ema20
-                if drop > 0.1:
-                    invest *= 2.5
-                elif drop > 0.2:
-                    invest *= 4.0
+        total_invest = monthly_budget * ((series.index[-1] - series.index[0]).days / 30)
 
-            # ===== ⑦ 上限制御 =====
-            invest = min(invest, daily_base * max_cash_multiple)
-
-            # ===== 購入 =====
-            shares += invest / price
-            cash_spent += invest
-
-            portfolio_values.append(shares * price)
-
-        df['portfolio'] = portfolio_values
-
-        # ===== 評価 =====
-        returns = df['portfolio'].pct_change().dropna()
-
-        total_return = df['portfolio'].iloc[-1] / cash_spent - 1 if cash_spent > 0 else 0
+        total_return = series.iloc[-1] / total_invest - 1 if total_invest > 0 else 0
         sharpe = (returns.mean() / returns.std()) * np.sqrt(252) if returns.std() > 0 else 0
 
-        # 最大ドローダウン
-        cummax = df['portfolio'].cummax()
-        drawdown = (df['portfolio'] - cummax) / cummax
-        mdd = drawdown.min()
+        cummax = series.cummax()
+        dd = (series - cummax) / cummax
+        mdd = dd.min()
 
-        avg_price = cash_spent / shares if shares > 0 else 0
+        return {
+            "name": name,
+            "final": series.iloc[-1],
+            "return": total_return,
+            "sharpe": sharpe,
+            "mdd": mdd
+        }
 
-        print("------ 結果 ------")
-        print(f"総投資額: {cash_spent:,.0f} 円")
-        print(f"最終資産: {df['portfolio'].iloc[-1]:,.0f} 円")
-        print(f"リターン: {total_return*100:.2f}%")
-        print(f"取得単価: {avg_price:.2f}")
-        print(f"保有株数: {shares:.2f}")
-        print(f"Sharpe: {sharpe:.2f}")
-        print(f"最大DD: {mdd*100:.2f}%")
-        print("------------------")
+    results = [
+        evaluate(df['DVA'], "DVA"),
+        evaluate(df['DCA_daily'], "DCA(毎日)"),
+        evaluate(df['DCA_weekly'], "DCA(毎週)"),
+        evaluate(df['DCA_monthly'], "DCA(毎月)")
+    ]
 
+    # =========================
+    # 結果表示
+    # =========================
+    print("\n------ 結果 ------")
+    for r in results:
+        print(f"{r['name']:<12} | "
+              f"最終資産: {r['final']:>10,.0f} | "
+              f"リターン: {r['return']*100:>6.2f}% | "
+              f"Sharpe: {r['sharpe']:>5.2f} | "
+              f"MDD: {r['mdd']*100:>6.2f}%")
+    print("------------------")
 
 # 実行
-run_ultimate_strategy(["NVDA", "AAPL", "TSLA", "8088.T"])
+compare_strategies("NVDA")
+compare_strategies("AAPL")
+compare_strategies("TSLA")
+compare_strategies("8088.T")

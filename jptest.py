@@ -86,4 +86,4 @@ def run_full_comparison_experiment(tickers, start_date="2014-01-01"):
         print("-" * 75)
 
 if __name__ == "__main__":
-    run_full_comparison_experiment(["NVDA", "AAPL", "TSLA"], start_date="2014-01-01")
+    run_full_comparison_experiment(["NVDA", "AAPL", "TSLA", "8088.T"], start_date="2014-01-01")

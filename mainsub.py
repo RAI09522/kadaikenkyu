@@ -74,4 +74,4 @@ def run_share_count_experiment(tickers, start_date="2014-01-01"):
         print("-" * 70)
 
 if __name__ == "__main__":
-    run_share_count_experiment(["NVDA", "AAPL", "TSLA"])
+    run_share_count_experiment(["NVDA", "AAPL", "TSLA", "8088.T"])

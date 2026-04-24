@@ -267,7 +267,7 @@ def run_share_count_experiment(
 
 if __name__ == "__main__":
     run_share_count_experiment(
-        ["NVDA", "AAPL", "TSLA", "8088.T"],
+        ["NVDA", "AAPL", "TSLA", "8088.T", "1443.T"],
         start_date="2014-01-01",
         monthly_budget_us=500,
         monthly_budget_jp=50000

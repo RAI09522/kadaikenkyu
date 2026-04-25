@@ -380,7 +380,7 @@ def run_share_count_experiment_fixed_budget(
 
 if __name__ == "__main__":
     run_share_count_experiment_fixed_budget(
-        ["NVDA", "AAPL", "TSLA", "8088.T", "1443.T"],
+        ["NVDA", "AAPL", "TSLA"],
         start_date="2014-01-01",
         end_date="2023-12-31",   # 10年間
         total_budget_us=60000,   # 500 USD × 12 × 10年

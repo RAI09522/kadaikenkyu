@@ -33,8 +33,8 @@ warnings.filterwarnings("ignore")
 # ──────────────────────────────────────────────
 # 設定
 # ──────────────────────────────────────────────
-START_DATE = "2007-01-01"
-END_DATE   = "2016-12-31"
+START_DATE = "2016-01-01"
+END_DATE   = "2025-12-31"
 
 
 # ═══════════════════════════════════════════════
@@ -417,7 +417,7 @@ if __name__ == "__main__":
     print("=" * 70)
 
     # 例: Apple (AAPL) を分析
-    analyze_stock("8088.T")
+    analyze_stock("7550.T")
 
     # 複数銘柄の一括分析例（コメントアウトを外して使用）
     # analyze_multiple_stocks(["AAPL", "MSFT", "GOOGL", "TSLA", "AMZN"])
